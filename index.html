@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BlogHub</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <header>
+        <h1>BlogHub</h1>
+        <p>A handpicked list of blogs worth reading. Click any to open it in a new tab.</p>
+      </header>
+      <button id="themeToggle" class="theme-toggle" type="button">Dark mode</button>
+    </div>
+
+    <div class="controls">
+      <input id="search" class="search" type="search" placeholder="Search blogs…" autocomplete="off" />
+      <button id="refresh" class="refresh" type="button" title="Re-fetch the latest posts now">Refresh</button>
+    </div>
+
+    <main id="sections"></main>
+
+    <footer>
+      To add or change blogs, edit <code>blogs.js</code> and refresh this page.
+      Latest posts are fetched from each blog's RSS feed.
+    </footer>
+  </div>
+
+  <script src="blogs.js"></script>
+  <script>
+    // ---------- Theme (dark mode) ----------
+    const themeToggle = document.getElementById("themeToggle");
+    function applyTheme(theme) {
+      document.documentElement.setAttribute("data-theme", theme);
+      themeToggle.textContent = theme === "dark" ? "Light mode" : "Dark mode";
+      localStorage.setItem("bloghub:theme", theme);
+    }
+    applyTheme(localStorage.getItem("bloghub:theme") || "light");
+    themeToggle.addEventListener("click", () => {
+      const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      applyTheme(next);
+    });
+
+    // ---------- Helpers ----------
+    const sectionsEl = document.getElementById("sections");
+    const searchEl = document.getElementById("search");
+    const feedResults = {}; // url -> { state: 'ok'|'fail', title, link, date }
+
+    function hostOf(url) {
+      try { return new URL(url).hostname.replace(/^www\./, ""); }
+      catch { return url; }
+    }
+    function feedUrlFor(blog) {
+      if (blog.feed) return blog.feed;
+      // Substack & most blog platforms expose an RSS feed at /feed
+      return blog.url.replace(/\/+$/, "") + "/feed";
+    }
+    // Each site's own logo. unavatar aggregates the best image it can find
+    // (the site's logo / Substack avatar / icon). Falls back to a favicon.
+    function logoFor(blog) {
+      if (blog.logo) return blog.logo;
+      return "https://unavatar.io/" + hostOf(blog.url) + "?fallback=false";
+    }
+    function fmtDate(s) {
+      const d = new Date(s);
+      if (isNaN(d)) return "";
+      return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    }
+    // Most recent post date for a blog, as a timestamp (or -Infinity if unknown)
+    function latestTs(url) {
+      const r = feedResults[url];
+      if (!r || r.state !== "ok" || !r.items.length) return -Infinity;
+      return Math.max(...r.items.map((it) => {
+        const t = new Date(it.date).getTime();
+        return isNaN(t) ? -Infinity : t;
+      }));
+    }
+
+    // ---------- Rendering ----------
+    function render(filter = "") {
+      const q = filter.trim().toLowerCase();
+      sectionsEl.innerHTML = "";
+
+      SECTIONS.forEach((section) => {
+        const matches = section.blogs.filter((b) => {
+          if (!q) return true;
+          return (
+            b.name.toLowerCase().includes(q) ||
+            (b.note || "").toLowerCase().includes(q) ||
+            hostOf(b.url).toLowerCase().includes(q)
+          );
+        });
+
+        if (q && matches.length === 0) return;
+
+        // Sort most-recently-updated first; blogs with no data yet sink to the bottom
+        const ordered = [...matches].sort((a, b) => latestTs(b.url) - latestTs(a.url));
+
+        const sec = document.createElement("section");
+        sec.className = "section";
+
+        const head = document.createElement("div");
+        head.className = "section-head";
+        head.innerHTML = `
+          <h2>${section.title}</h2>
+          <span class="count">${matches.length}</span>
+          <span class="chev">▾</span>
+        `;
+        head.addEventListener("click", () => sec.classList.toggle("collapsed"));
+        sec.appendChild(head);
+
+        const cards = document.createElement("div");
+        cards.className = "cards";
+
+        if (matches.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "No blogs yet — add some in blogs.js";
+          cards.appendChild(empty);
+        }
+
+        ordered.forEach((b) => {
+          const card = document.createElement("div");
+          card.className = "card";
+          card.innerHTML = `
+            <a href="${b.url}" target="_blank" rel="noopener noreferrer">
+              <div class="head">
+                <img class="logo" src="${logoFor(b)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-host="${hostOf(b.url)}" onerror="if(!this.dataset.f){this.dataset.f=1;this.src='https://www.google.com/s2/favicons?domain='+this.dataset.host+'&sz=128';}else{this.classList.add('logo-fallback');this.removeAttribute('src');}" />
+                <div class="head-text">
+                  <div class="name">${b.name} <span class="arrow">↗</span></div>
+                  <div class="host">${hostOf(b.url)}</div>
+                </div>
+              </div>
+              ${b.note ? `<div class="note">${b.note}</div>` : ""}
+            </a>
+            <div class="latest" data-url="${b.url}">
+              <span class="label">Latest posts</span>
+              <span class="pending">Loading…</span>
+            </div>
+          `;
+          cards.appendChild(card);
+        });
+
+        sec.appendChild(cards);
+        sectionsEl.appendChild(sec);
+      });
+
+      if (sectionsEl.children.length === 0) {
+        sectionsEl.innerHTML = `<div class="empty">No matches for “${filter}”.</div>`;
+      }
+
+      applyAllLatest(); // fill in any feeds we've already fetched
+    }
+
+    // Put a fetched result into every matching card currently on screen
+    function applyLatest(url) {
+      const r = feedResults[url];
+      if (!r) return;
+      document.querySelectorAll(`.latest[data-url="${CSS.escape(url)}"]`).forEach((el) => {
+        if (r.state === "ok") {
+          const items = r.items.map((it) => `
+            <li>
+              <a class="post" href="${it.link}" target="_blank" rel="noopener noreferrer">${it.title}</a>
+              ${it.date ? `<span class="date">${fmtDate(it.date)}</span>` : ""}
+            </li>
+          `).join("");
+          el.innerHTML = `<span class="label">Latest posts</span><ul class="posts">${items}</ul>`;
+        } else {
+          el.innerHTML = `<span class="label">Latest posts</span><span class="fail">Couldn't load feed</span>`;
+        }
+      });
+    }
+    function applyAllLatest() {
+      Object.keys(feedResults).forEach(applyLatest);
+    }
+
+    // ---------- Feed fetching (cached daily) ----------
+    const CACHE_TTL = 1000 * 60 * 60 * 24; // 24 hours — refreshes once a day
+
+    async function loadFeed(blog, force = false) {
+      const url = blog.url;
+      const feed = feedUrlFor(blog);
+      const cacheKey = "bloghub:feed:" + feed;
+
+      if (!force) {
+        try {
+          const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+          if (cached && Date.now() - cached.ts < CACHE_TTL) {
+            feedResults[url] = cached.result;
+            applyLatest(url);
+            return;
+          }
+        } catch {}
+      }
+
+      try {
+        const api = "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(feed);
+        const res = await fetch(api);
+        const data = await res.json();
+        if (data.status === "ok" && data.items && data.items.length) {
+          const items = data.items.slice(0, 3).map((it) => ({
+            title: it.title, link: it.link, date: it.pubDate,
+          }));
+          feedResults[url] = { state: "ok", items };
+        } else {
+          feedResults[url] = { state: "fail" };
+        }
+      } catch {
+        feedResults[url] = { state: "fail" };
+      }
+      localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), result: feedResults[url] }));
+      applyLatest(url);
+    }
+
+    function loadAllFeeds(force = false) {
+      const jobs = SECTIONS.flatMap((s) => s.blogs.map((b) => loadFeed(b, force)));
+      return Promise.all(jobs);
+    }
+
+    // ---------- Boot ----------
+    searchEl.addEventListener("input", (e) => render(e.target.value));
+    document.getElementById("refresh").addEventListener("click", () => {
+      const btn = document.getElementById("refresh");
+      btn.disabled = true;
+      const original = btn.textContent;
+      btn.textContent = "↻ Refreshing…";
+      document.querySelectorAll(".latest").forEach((el) => {
+        el.innerHTML = `<span class="label">Latest posts</span><span class="pending">Loading…</span>`;
+      });
+      loadAllFeeds(true).then(() => {
+        render(searchEl.value);
+        btn.disabled = false;
+        btn.textContent = original;
+      });
+    });
+    render();
+    loadAllFeeds().then(() => render(searchEl.value));
+  </script>
+</body>
+</html>
