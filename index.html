@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BlogHub</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <header>
+        <h1>BlogHub</h1>
+        <p>A handpicked list of blogs worth reading. Click any to open it in a new tab.</p>
+      </header>
+      <div class="topbar-actions">
+        <div class="account" id="account"></div>
+        <button id="themeToggle" class="theme-toggle" type="button">Dark mode</button>
+      </div>
+    </div>
+
+    <div class="controls">
+      <input id="search" class="search" type="search" placeholder="Search blogs…" autocomplete="off" />
+      <button id="refresh" class="refresh" type="button" title="Re-fetch the latest posts now">Refresh</button>
+    </div>
+
+    <main id="sections"></main>
+
+    <footer>
+      Sign in to build your own list, saved to the cloud and synced across devices.
+      Latest posts are fetched from each blog's RSS feed.
+    </footer>
+  </div>
+
+  <!-- Add-blog modal -->
+  <div id="modal" class="modal-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <h3 id="modal-title">Add a blog</h3>
+      <label>Name<input id="m-name" type="text" placeholder="e.g. Astral Codex Ten" /></label>
+      <label>Link (URL)<input id="m-url" type="url" placeholder="https://…" /></label>
+      <label>Note (optional)<input id="m-note" type="text" placeholder="short description" /></label>
+      <label>Section (optional)<input id="m-section" type="text" placeholder="e.g. AI Safety — groups this blog" list="section-list" /></label>
+      <datalist id="section-list"></datalist>
+      <p class="modal-error" id="m-error" hidden></p>
+      <div class="modal-actions">
+        <button id="m-cancel" class="btn-ghost" type="button">Cancel</button>
+        <button id="m-save" class="btn-primary" type="button">Add blog</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="blogs.js"></script>
+  <script>
+    // ---------- Theme (dark mode) ----------
+    const themeToggle = document.getElementById("themeToggle");
+    function applyTheme(theme) {
+      document.documentElement.setAttribute("data-theme", theme);
+      themeToggle.textContent = theme === "dark" ? "Light mode" : "Dark mode";
+      localStorage.setItem("bloghub:theme", theme);
+    }
+    applyTheme(localStorage.getItem("bloghub:theme") || "light");
+    themeToggle.addEventListener("click", () => {
+      const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      applyTheme(next);
+    });
+
+    // ---------- Accounts (Supabase) ----------
+    let sb = null;               // Supabase client, or null if not configured
+    let currentUser = localStorage.getItem("bloghub:user") || null;
+    let userBlogs = [];          // this user's blogs from the cloud
+
+    function accountsConfigured() {
+      return typeof SUPABASE_URL === "string" &&
+             typeof SUPABASE_ANON_KEY === "string" &&
+             !SUPABASE_URL.includes("YOUR_") &&
+             !SUPABASE_ANON_KEY.includes("YOUR_") &&
+             window.supabase;
+    }
+    function initSupabase() {
+      if (accountsConfigured()) {
+        sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      }
+    }
+
+    const accountEl = document.getElementById("account");
+    function renderAccount() {
+      if (!accountsConfigured()) {
+        accountEl.innerHTML = `<span class="account-note" title="Add your Supabase keys in config.js (see SETUP.md)">Accounts off</span>`;
+        return;
+      }
+      if (currentUser) {
+        accountEl.innerHTML = `
+          <span class="account-name">Hi, ${currentUser}</span>
+          <button id="addBlogBtn" class="btn-primary sm" type="button">+ Add blog</button>
+          <button id="signOutBtn" class="btn-ghost sm" type="button">Sign out</button>
+        `;
+        document.getElementById("addBlogBtn").addEventListener("click", openModal);
+        document.getElementById("signOutBtn").addEventListener("click", signOut);
+      } else {
+        accountEl.innerHTML = `<button id="signInBtn" class="btn-ghost sm" type="button">Sign in</button>`;
+        document.getElementById("signInBtn").addEventListener("click", signIn);
+      }
+    }
+
+    // Hash a PIN before storing it, salted with the username, so the
+    // database never sees the raw PIN.
+    async function hashPin(username, pin) {
+      const data = new TextEncoder().encode("bloghub:" + username + ":" + pin);
+      const buf = await crypto.subtle.digest("SHA-256", data);
+      return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    async function signIn() {
+      const raw = prompt("Enter your username (letters, numbers, dashes):");
+      if (raw === null) return;
+      const username = raw.trim().toLowerCase().replace(/\s+/g, "-");
+      if (!/^[a-z0-9_-]{2,30}$/.test(username)) {
+        alert("Please use 2–30 characters: letters, numbers, dashes or underscores.");
+        return;
+      }
+
+      try {
+        // Does this username already exist?
+        const { data: existing, error } = await sb
+          .from("profiles").select("username, pin_hash").eq("username", username).maybeSingle();
+        if (error) throw error;
+
+        if (existing) {
+          // Returning user — verify their PIN
+          const pin = prompt(`Enter the PIN for “${username}”:`);
+          if (pin === null) return;
+          const h = await hashPin(username, pin.trim());
+          if (h !== existing.pin_hash) { alert("Incorrect PIN."); return; }
+        } else {
+          // New user — set a PIN
+          const pin = prompt("New username! Create a PIN (at least 4 characters) to protect it:");
+          if (pin === null) return;
+          if (pin.trim().length < 4) { alert("PIN must be at least 4 characters."); return; }
+          const confirmPin = prompt("Re-enter your PIN to confirm:");
+          if (confirmPin === null) return;
+          if (pin.trim() !== confirmPin.trim()) { alert("Those PINs didn't match — try again."); return; }
+          const h = await hashPin(username, pin.trim());
+          const { error: insErr } = await sb.from("profiles").insert({ username, pin_hash: h });
+          if (insErr) throw insErr;
+        }
+
+        currentUser = username;
+        localStorage.setItem("bloghub:user", username);
+        renderAccount();
+        await loadUserBlogs();
+        render(searchEl.value);
+        loadAllFeeds().then(() => render(searchEl.value));
+      } catch (e) {
+        alert("Couldn't sign in: " + (e.message || e));
+      }
+    }
+
+    function signOut() {
+      currentUser = null;
+      userBlogs = [];
+      localStorage.removeItem("bloghub:user");
+      renderAccount();
+      render(searchEl.value);
+    }
+
+    async function loadUserBlogs() {
+      if (!sb || !currentUser) { userBlogs = []; return; }
+      const { data, error } = await sb
+        .from("blogs")
+        .select("id, name, url, note, section, feed, logo")
+        .eq("username", currentUser)
+        .order("created_at", { ascending: true });
+      userBlogs = error ? [] : (data || []);
+    }
+
+    async function addUserBlog(blog) {
+      const { error } = await sb.from("blogs").insert({
+        username: currentUser, name: blog.name, url: blog.url,
+        note: blog.note || null, section: blog.section || null,
+      });
+      if (error) throw error;
+      await loadUserBlogs();
+      render(searchEl.value);
+      loadAllFeeds().then(() => render(searchEl.value));
+    }
+
+    // One-click import of the curated starter set (blogs.js SECTIONS) into
+    // the signed-in user's own account, keeping the section groupings.
+    async function importStarter() {
+      if (!sb || !currentUser) return;
+      const rows = [];
+      SECTIONS.forEach((s) => s.blogs.forEach((b) => rows.push({
+        username: currentUser, name: b.name, url: b.url,
+        note: b.note || null, section: s.title, feed: b.feed || null, logo: b.logo || null,
+      })));
+      const { error } = await sb.from("blogs").insert(rows);
+      if (error) { alert("Import failed: " + (error.message || error)); return; }
+      await loadUserBlogs();
+      render(searchEl.value);
+      loadAllFeeds().then(() => render(searchEl.value));
+    }
+
+    async function removeUserBlog(id) {
+      if (!confirm("Remove this blog from your list?")) return;
+      await sb.from("blogs").delete().eq("id", id).eq("username", currentUser);
+      await loadUserBlogs();
+      render(searchEl.value);
+    }
+
+    // ---------- Add-blog modal ----------
+    const modal = document.getElementById("modal");
+    const mName = document.getElementById("m-name");
+    const mUrl = document.getElementById("m-url");
+    const mNote = document.getElementById("m-note");
+    const mSection = document.getElementById("m-section");
+    const mError = document.getElementById("m-error");
+    function openModal() {
+      mName.value = ""; mUrl.value = ""; mNote.value = ""; mSection.value = "";
+      // Offer the user's existing section names as suggestions
+      const names = [...new Set(userBlogs.map((b) => b.section).filter(Boolean))];
+      document.getElementById("section-list").innerHTML =
+        names.map((n) => `<option value="${esc(n)}"></option>`).join("");
+      mError.hidden = true;
+      modal.hidden = false;
+      mName.focus();
+    }
+    function closeModal() { modal.hidden = true; }
+    document.getElementById("m-cancel").addEventListener("click", closeModal);
+    modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+    document.getElementById("m-save").addEventListener("click", async () => {
+      const name = mName.value.trim();
+      let url = mUrl.value.trim();
+      if (!name || !url) { mError.textContent = "Name and link are required."; mError.hidden = false; return; }
+      if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+      try { new URL(url); } catch { mError.textContent = "That link doesn't look valid."; mError.hidden = false; return; }
+      try {
+        await addUserBlog({ name, url, note: mNote.value.trim(), section: mSection.value.trim() });
+        closeModal();
+      } catch (e) {
+        mError.textContent = "Couldn't add: " + (e.message || e); mError.hidden = false;
+      }
+    });
+
+    // ---------- Helpers ----------
+    const sectionsEl = document.getElementById("sections");
+    const searchEl = document.getElementById("search");
+    const feedResults = {}; // url -> { state: 'ok'|'fail', items: [...] }
+
+    // Group the signed-in user's blogs into sections by their "section" field
+    function groupUserBlogs() {
+      const groups = [];
+      const idx = {};
+      userBlogs.forEach((b) => {
+        const title = (b.section && b.section.trim()) ? b.section.trim() : "My Blogs";
+        if (!(title in idx)) { idx[title] = groups.length; groups.push({ title, blogs: [], mine: true }); }
+        groups[idx[title]].blogs.push(b);
+      });
+      return groups;
+    }
+
+    // What to render:
+    //  - signed out (or signed in with an empty list): the Recommended list
+    //  - signed in with blogs: the user's own grouped sections
+    function sectionsToRender() {
+      if (currentUser && userBlogs.length > 0) return groupUserBlogs();
+      return [{ title: "Recommended", blogs: RECOMMENDATIONS, recommended: true }];
+    }
+
+    function hostOf(url) {
+      try { return new URL(url).hostname.replace(/^www\./, ""); }
+      catch { return url; }
+    }
+    function feedUrlFor(blog) {
+      if (blog.feed) return blog.feed;
+      return blog.url.replace(/\/+$/, "") + "/feed";
+    }
+    function logoFor(blog) {
+      if (blog.logo) return blog.logo;
+      return "https://unavatar.io/" + hostOf(blog.url) + "?fallback=false";
+    }
+    function fmtDate(s) {
+      const d = new Date(s);
+      if (isNaN(d)) return "";
+      return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    }
+    function latestTs(url) {
+      const r = feedResults[url];
+      if (!r || r.state !== "ok" || !r.items.length) return -Infinity;
+      return Math.max(...r.items.map((it) => {
+        const t = new Date(it.date).getTime();
+        return isNaN(t) ? -Infinity : t;
+      }));
+    }
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, (c) => (
+        { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+      ));
+    }
+
+    // ---------- Rendering ----------
+    function render(filter = "") {
+      const q = filter.trim().toLowerCase();
+      sectionsEl.innerHTML = "";
+
+      // Empty-state banner for a signed-in user with no blogs yet
+      if (currentUser && userBlogs.length === 0 && !q) {
+        const es = document.createElement("div");
+        es.className = "empty-state";
+        es.innerHTML = `
+          <h2>Your list is empty</h2>
+          <p>Build it your way — import a ready-made set, or add blogs one at a time.</p>
+          <div class="empty-actions">
+            <button class="btn-primary import-btn" type="button">Import recommended starter set</button>
+            <button class="btn-ghost add-btn" type="button">+ Add a blog</button>
+          </div>
+          <p class="es-sub">A few recommendations to get you started:</p>
+        `;
+        sectionsEl.appendChild(es);
+      }
+
+      sectionsToRender().forEach((section) => {
+        const matches = section.blogs.filter((b) => {
+          if (!q) return true;
+          return (
+            b.name.toLowerCase().includes(q) ||
+            (b.note || "").toLowerCase().includes(q) ||
+            hostOf(b.url).toLowerCase().includes(q)
+          );
+        });
+
+        if (matches.length === 0) return;
+
+        const ordered = [...matches].sort((a, b) => latestTs(b.url) - latestTs(a.url));
+
+        const sec = document.createElement("section");
+        sec.className = "section";
+
+        const head = document.createElement("div");
+        head.className = "section-head";
+        head.innerHTML = `
+          <h2>${esc(section.title)}</h2>
+          <span class="count">${matches.length}</span>
+          <span class="chev">▾</span>
+        `;
+        head.addEventListener("click", () => sec.classList.toggle("collapsed"));
+        sec.appendChild(head);
+
+        const cards = document.createElement("div");
+        cards.className = "cards";
+
+        ordered.forEach((b) => {
+          const card = document.createElement("div");
+          card.className = "card";
+          card.innerHTML = `
+            <a href="${esc(b.url)}" target="_blank" rel="noopener noreferrer">
+              <div class="head">
+                <img class="logo" src="${logoFor(b)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-host="${esc(hostOf(b.url))}" onerror="if(!this.dataset.f){this.dataset.f=1;this.src='https://www.google.com/s2/favicons?domain='+this.dataset.host+'&sz=128';}else{this.classList.add('logo-fallback');this.removeAttribute('src');}" />
+                <div class="head-text">
+                  <div class="name">${esc(b.name)} <span class="arrow">↗</span></div>
+                  <div class="host">${esc(hostOf(b.url))}</div>
+                </div>
+              </div>
+              ${b.note ? `<div class="note">${esc(b.note)}</div>` : ""}
+            </a>
+            <div class="latest" data-url="${esc(b.url)}">
+              <span class="label">Latest posts</span>
+              <span class="pending">Loading…</span>
+            </div>
+            ${section.mine ? `<button class="card-remove" data-id="${esc(b.id)}" type="button">Remove</button>` : ""}
+          `;
+          cards.appendChild(card);
+        });
+
+        sec.appendChild(cards);
+        sectionsEl.appendChild(sec);
+      });
+
+      if (sectionsEl.children.length === 0) {
+        sectionsEl.innerHTML = `<div class="empty">No matches for “${esc(filter)}”.</div>`;
+      }
+
+      applyAllLatest();
+    }
+
+    // Remove-button clicks (event delegation, survives re-renders)
+    sectionsEl.addEventListener("click", (e) => {
+      const remove = e.target.closest(".card-remove");
+      if (remove) { removeUserBlog(remove.dataset.id); return; }
+      if (e.target.closest(".import-btn")) { importStarter(); return; }
+      if (e.target.closest(".add-btn")) { openModal(); return; }
+    });
+
+    function applyLatest(url) {
+      const r = feedResults[url];
+      if (!r) return;
+      document.querySelectorAll(`.latest[data-url="${CSS.escape(url)}"]`).forEach((el) => {
+        if (r.state === "ok") {
+          const items = r.items.map((it) => `
+            <li>
+              <a class="post" href="${esc(it.link)}" target="_blank" rel="noopener noreferrer">${esc(it.title)}</a>
+              ${it.date ? `<span class="date">${fmtDate(it.date)}</span>` : ""}
+            </li>
+          `).join("");
+          el.innerHTML = `<span class="label">Latest posts</span><ul class="posts">${items}</ul>`;
+        } else {
+          el.innerHTML = `<span class="label">Latest posts</span><span class="fail">Couldn't load feed</span>`;
+        }
+      });
+    }
+    function applyAllLatest() {
+      Object.keys(feedResults).forEach(applyLatest);
+    }
+
+    // ---------- Feed fetching (cached daily) ----------
+    const CACHE_TTL = 1000 * 60 * 60 * 24; // 24 hours
+
+    async function loadFeed(blog, force = false) {
+      const url = blog.url;
+      const feed = feedUrlFor(blog);
+      const cacheKey = "bloghub:feed:" + feed;
+
+      if (!force) {
+        try {
+          const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+          if (cached && Date.now() - cached.ts < CACHE_TTL) {
+            feedResults[url] = cached.result;
+            applyLatest(url);
+            return;
+          }
+        } catch {}
+      }
+
+      try {
+        const api = "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(feed);
+        const res = await fetch(api);
+        const data = await res.json();
+        if (data.status === "ok" && data.items && data.items.length) {
+          const items = data.items.slice(0, 3).map((it) => ({
+            title: it.title, link: it.link, date: it.pubDate,
+          }));
+          feedResults[url] = { state: "ok", items };
+        } else {
+          feedResults[url] = { state: "fail" };
+        }
+      } catch {
+        feedResults[url] = { state: "fail" };
+      }
+      localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), result: feedResults[url] }));
+      applyLatest(url);
+    }
+
+    function loadAllFeeds(force = false) {
+      const seen = new Set();
+      const jobs = [];
+      sectionsToRender().forEach((s) => s.blogs.forEach((b) => {
+        if (seen.has(b.url)) return;
+        seen.add(b.url);
+        jobs.push(loadFeed(b, force));
+      }));
+      return Promise.all(jobs);
+    }
+
+    // ---------- Boot ----------
+    searchEl.addEventListener("input", (e) => render(e.target.value));
+    document.getElementById("refresh").addEventListener("click", () => {
+      const btn = document.getElementById("refresh");
+      btn.disabled = true;
+      const original = btn.textContent;
+      btn.textContent = "Refreshing…";
+      document.querySelectorAll(".latest").forEach((el) => {
+        el.innerHTML = `<span class="label">Latest posts</span><span class="pending">Loading…</span>`;
+      });
+      loadAllFeeds(true).then(() => {
+        render(searchEl.value);
+        btn.disabled = false;
+        btn.textContent = original;
+      });
+    });
+
+    initSupabase();
+    renderAccount();
+    render();
+    (async () => {
+      if (sb && currentUser) await loadUserBlogs();
+      render(searchEl.value);
+      loadAllFeeds().then(() => render(searchEl.value));
+    })();
+  </script>
+</body>
+</html>
