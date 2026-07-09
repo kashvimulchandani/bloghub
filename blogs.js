@@ -44,23 +44,35 @@ const SECTIONS = [
       { name: "Forethought Newsletter", url: "https://newsletter.forethought.org/", note: "Forethought's essays and updates by email" },
       { name: "From Matter", url: "https://frommatter.substack.com/", note: "Matt Reardon — EA, AI, politics, philosophy" },
       { name: "Andy Masley", url: "https://blog.andymasley.com/", note: "AI, environment, EA, rationality" },
+      { name: "Celeste-land", url: "https://ceselder.substack.com/", note: "Celeste, AIS, other things" },
+      { name: "The Update", url: "https://www.update.news/" },
     ],
   },
   {
-    title: "Animal Welfare",
+    title: "Animal Welfare – Research",
     blogs: [
       { name: "Coefficient Giving — Farm Animal Welfare", url: "https://farmanimalwelfare.substack.com/", note: "Lewis Bollard on helping factory-farmed animals" },
       { name: "RP Strategic Animal Insights", url: "https://rpstrategicanimalinsights.substack.com/", note: "Rethink Priorities — animal research for advocates" },
       { name: "Alt Protein Planet", url: "https://thegoodfoodinstitute.substack.com/", note: "Good Food Institute — alternative proteins" },
-      { name: "Sandcastles", url: "https://sandcastlesblog.substack.com/", note: "Aidan Kankyoku — animal advocacy strategy" },
       { name: "Animal Think Tank Newsletter", url: "https://animalthinktank.substack.com/", note: "Narrative & movement strategy for animals" },
-      { name: "Frontier Animals", url: "https://frontieranimals.substack.com/", note: "Itsi Weinstock — ending factory farming, AI" },
       { name: "regressiontothemeat", url: "https://regressiontothemeat.substack.com/", note: "Seth Ariel Green — meat-reduction research" },
-      { name: "The Simple Heart", url: "https://simpleheart.substack.com/", note: "Wayne Hsiung — compassion & investigations" },
-      { name: "The Update", url: "https://www.update.news/", note: "Animal advocacy news and analysis" },
-      { name: "Sentient Futures", url: "https://sentientfutures.substack.com/", note: "AI and the welfare of sentient beings" },
+      { name: "Anima International", url: "https://animainternational.substack.com/", note: "Animal advocacy, alignment" },
+      ],
+  },
+  {
+  title: "Animal Welfare – Organisations",
+  blogs: [
+  { name: "Sentient Futures", url: "https://sentientfutures.substack.com/", note: "AI and the welfare of sentient beings" },
       { name: "Hive", url: "https://joinhive.substack.com/", note: "Biweekly farmed-animal movement roundup" },
-    ],
+     ],
+  },
+  {
+  title: "Animal Welfare – Other",
+  blogs: [
+  { name: "Sandcastles", url: "https://sandcastlesblog.substack.com/", note: "Aidan Kankyoku — animal advocacy strategy" },
+  { name: "Frontier Animals", url: "https://frontieranimals.substack.com/", note: "Itsi Weinstock — ending factory farming, AI" },
+  { name: "The Simple Heart", url: "https://simpleheart.substack.com/", note: "Wayne Hsiung — compassion & investigations" },
+     ],
   },
   {
     title: "AI Safety",
