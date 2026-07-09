@@ -69,6 +69,7 @@ const SECTIONS = [
       { name: "ControlAI", url: "https://controlai.news/", note: "Keeping humanity in control of AI" },
       { name: "Redwood Research Blog", url: "https://blog.redwoodresearch.org/", note: "AI control & catastrophic-risk research" },
       { name: "The Power Law", url: "https://peterwildeford.substack.com/", note: "Peter Wildeford — AI, forecasting, policy" },
+      { name: "Don't Worry About The Vase", url: "https://thezvi.substack.com/", note: "Zvi Mowshowitz"},
       { name: "AI Safety Events & Training", url: "https://aisafetyeventsandtraining.substack.com/", note: "Weekly roundup of events, courses and fellowships" },
     ],
   },
