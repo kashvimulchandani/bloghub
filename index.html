@@ -102,17 +102,48 @@
       }
     }
 
+    // Hash a PIN before storing it, salted with the username, so the
+    // database never sees the raw PIN.
+    async function hashPin(username, pin) {
+      const data = new TextEncoder().encode("bloghub:" + username + ":" + pin);
+      const buf = await crypto.subtle.digest("SHA-256", data);
+      return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+    }
+
     async function signIn() {
-      const raw = prompt("Choose a username (letters, numbers, dashes):");
+      const raw = prompt("Enter your username (letters, numbers, dashes):");
       if (raw === null) return;
       const username = raw.trim().toLowerCase().replace(/\s+/g, "-");
       if (!/^[a-z0-9_-]{2,30}$/.test(username)) {
         alert("Please use 2–30 characters: letters, numbers, dashes or underscores.");
         return;
       }
+
       try {
-        // Register the username (ignore error if it already exists)
-        await sb.from("profiles").upsert({ username }, { onConflict: "username" });
+        // Does this username already exist?
+        const { data: existing, error } = await sb
+          .from("profiles").select("username, pin_hash").eq("username", username).maybeSingle();
+        if (error) throw error;
+
+        if (existing) {
+          // Returning user — verify their PIN
+          const pin = prompt(`Enter the PIN for “${username}”:`);
+          if (pin === null) return;
+          const h = await hashPin(username, pin.trim());
+          if (h !== existing.pin_hash) { alert("Incorrect PIN."); return; }
+        } else {
+          // New user — set a PIN
+          const pin = prompt("New username! Create a PIN (at least 4 characters) to protect it:");
+          if (pin === null) return;
+          if (pin.trim().length < 4) { alert("PIN must be at least 4 characters."); return; }
+          const confirmPin = prompt("Re-enter your PIN to confirm:");
+          if (confirmPin === null) return;
+          if (pin.trim() !== confirmPin.trim()) { alert("Those PINs didn't match — try again."); return; }
+          const h = await hashPin(username, pin.trim());
+          const { error: insErr } = await sb.from("profiles").insert({ username, pin_hash: h });
+          if (insErr) throw insErr;
+        }
+
         currentUser = username;
         localStorage.setItem("bloghub:user", username);
         renderAccount();
