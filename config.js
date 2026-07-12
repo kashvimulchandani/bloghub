@@ -8,5 +8,5 @@
 //  below (replace the placeholder text, keep the quotes):
 // ============================================================
 
-const SUPABASE_URL = "YOUR_SUPABASE_URL";        // e.g. https://abcd1234.supabase.co
-const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY"; // the long "anon public" key
+const SUPABASE_URL = "https://potrpkeelwdqqpzopgix.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_0P07Pm-pBaf_jZap_q-5tQ_0MQcPtzI";
