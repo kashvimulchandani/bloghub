@@ -81,7 +81,7 @@ header p {
 .account-name { color: var(--muted); font-size: 0.9rem; }
 .account-note { color: var(--muted); font-size: 0.82rem; opacity: 0.8; cursor: help; }
 
-.theme-toggle {
+.theme-toggle, .toplink {
   flex: none;
   border: 1px solid var(--border);
   background: var(--card);
@@ -94,7 +94,8 @@ header p {
   box-shadow: var(--shadow);
   transition: border-color 0.15s ease, color 0.15s ease;
 }
-.theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
+.toplink { text-decoration: none; display: inline-block; }
+.theme-toggle:hover, .toplink:hover { border-color: var(--accent); color: var(--accent); }
 
 /* Buttons */
 .btn-primary, .btn-ghost {
